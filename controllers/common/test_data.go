@@ -17,11 +17,14 @@
 package common
 
 import (
+	olmv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	apiv1alpha1 "github.com/IBM/operand-deployment-lifecycle-manager/api/v1alpha1"
+	constant "github.com/IBM/operand-deployment-lifecycle-manager/controllers/constant"
 )
 
 // Return OperandRegistry obj
@@ -171,6 +174,73 @@ func SecretObj(name, namespace string) *corev1.Secret {
 		},
 		StringData: map[string]string{
 			"test": name,
+		},
+	}
+}
+
+func SubscriptionObj(name, namespace, csvVersion string) *olmv1alpha1.Subscription {
+	labels := map[string]string{
+		constant.OpreqLabel: "true",
+	}
+	return &olmv1alpha1.Subscription{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: &olmv1alpha1.SubscriptionSpec{
+			Channel:                "alpha",
+			Package:                name,
+			CatalogSource:          "community-operators",
+			CatalogSourceNamespace: "openshift-marketplace",
+		},
+		Status: olmv1alpha1.SubscriptionStatus{
+			CurrentCSV:   name + "-csv.v" + csvVersion,
+			InstalledCSV: name + "-csv.v" + csvVersion,
+			Install: &olmv1alpha1.InstallPlanReference{
+				APIVersion: "operators.coreos.com/v1alpha1",
+				Kind:       "InstallPlan",
+				Name:       name + "-install-plan",
+				UID:        types.UID("install-plan-uid"),
+			},
+			InstallPlanRef: &corev1.ObjectReference{
+				APIVersion: "operators.coreos.com/v1alpha1",
+				Kind:       "InstallPlan",
+				Name:       name + "-install-plan",
+				Namespace:  namespace,
+				UID:        types.UID("install-plan-uid"),
+			},
+		},
+	}
+}
+
+// Return CSV obj
+func CSVObj(name, namespace, example string) *olmv1alpha1.ClusterServiceVersion {
+	return &olmv1alpha1.ClusterServiceVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"alm-examples": example,
+			},
+		},
+		Spec: olmv1alpha1.ClusterServiceVersionSpec{},
+		Status: olmv1alpha1.ClusterServiceVersionStatus{
+			Phase: olmv1alpha1.CSVPhaseSucceeded,
+		},
+	}
+}
+
+// Return InstallPlan obj
+func InstallPlanObj(name, namespace string) *olmv1alpha1.InstallPlan {
+	return &olmv1alpha1.InstallPlan{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: olmv1alpha1.InstallPlanSpec{},
+		Status: olmv1alpha1.InstallPlanStatus{
+			Phase: olmv1alpha1.InstallPlanPhaseComplete,
 		},
 	}
 }

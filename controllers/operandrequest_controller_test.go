@@ -13,7 +13,94 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+
 package controllers
+
+import (
+	"context"
+	"fmt"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/types"
+
+	operatorv1alpha1 "github.com/IBM/operand-deployment-lifecycle-manager/api/v1alpha1"
+	testdata "github.com/IBM/operand-deployment-lifecycle-manager/controllers/common"
+)
+
+// +kubebuilder:docs-gen:collapse=Imports
+
+var _ = Describe("OperandRequest controller", func() {
+	// Define utility constants for object names.
+	const (
+		name              = "ibm-cloudpak-name"
+		namespace         = "ibm-cloudpak"
+		registryName      = "common-service"
+		registryNamespace = "ibm-common-service"
+		operatorNamespace = "ibm-operators"
+	)
+
+	var (
+		ctx context.Context
+
+		registry    *operatorv1alpha1.OperandRegistry
+		config      *operatorv1alpha1.OperandConfig
+		request     *operatorv1alpha1.OperandRequest
+		requestKey  types.NamespacedName
+		registryKey types.NamespacedName
+		configKey   types.NamespacedName
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		requestNamespaceName := createNSName(namespace)
+		registryNamespaceName := createNSName(registryNamespace)
+		operatorNamespaceName := createNSName(operatorNamespace)
+
+		registry = testdata.OperandRegistryObj(registryName, registryNamespaceName, operatorNamespaceName)
+		config = testdata.OperandConfigObj(registryName, registryNamespaceName)
+		request = testdata.OperandRequestObj(registryName, registryNamespaceName, name, requestNamespaceName)
+		requestKey = types.NamespacedName{Name: name, Namespace: requestNamespaceName}
+		registryKey = types.NamespacedName{Name: registryName, Namespace: registryNamespaceName}
+		configKey = types.NamespacedName{Name: registryName, Namespace: registryNamespaceName}
+
+		Expect(k8sClient.Create(ctx, testdata.NamespaceObj(requestNamespaceName))).Should(Succeed())
+		Expect(k8sClient.Create(ctx, testdata.NamespaceObj(registryNamespaceName))).Should(Succeed())
+		Expect(k8sClient.Create(ctx, testdata.NamespaceObj(operatorNamespaceName))).Should(Succeed())
+
+		Expect(k8sClient.Create(ctx, registry)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, config)).Should(Succeed())
+
+		By("By creating a OperandRequest to trigger OperandRequest controller")
+		Expect(k8sClient.Create(ctx, request)).Should(Succeed())
+	})
+
+	AfterEach(func() {
+		By("Deleting the OperandRequest")
+		Expect(k8sClient.Delete(ctx, request)).Should(Succeed())
+		Expect(k8sClient.Delete(ctx, registry)).Should(Succeed())
+		Expect(k8sClient.Delete(ctx, config)).Should(Succeed())
+	})
+
+	Context("Sharing the the secret and configmap with public scope", func() {
+		It("Should OperandRequest is completed", func() {
+
+			By("Checking status of the OperandBindInfo")
+			registryInstance := &operatorv1alpha1.OperandRegistry{}
+			Expect(k8sClient.Get(ctx, registryKey, registryInstance)).Should(Succeed())
+			configInstance := &operatorv1alpha1.OperandConfig{}
+			Expect(k8sClient.Get(ctx, configKey, configInstance)).Should(Succeed())
+			requestInstance := &operatorv1alpha1.OperandRequest{}
+			Expect(k8sClient.Get(ctx, requestKey, requestInstance)).Should(Succeed())
+
+			Eventually(func() bool {
+				fmt.Println(requestInstance.Status)
+				return true
+			}).Should(BeFalse())
+
+		})
+	})
+})
 
 // import (
 // 	"context"
@@ -341,205 +428,32 @@ package controllers
 // // 	return nil
 // // }
 
-// type DataObj struct {
-// 	odlmObjs []runtime.Object
-// 	olmObjs  []runtime.Object
-// }
-
-// func initClientData(name, namespace, registryName, registryNamespace, operatorNamespace string) *DataObj {
-// 	return &DataObj{
-// 		odlmObjs: []runtime.Object{
-// 			operandRegistry(registryName, registryNamespace, operatorNamespace),
-// 			operandRequest(name, namespace, registryName, registryNamespace),
-// 			operandConfig(registryName, registryNamespace)},
-// 		olmObjs: []runtime.Object{
-// 			sub("etcd", operatorNamespace, "0.0.1"),
-// 			sub("jenkins", operatorNamespace, "0.0.1"),
-// 			csv("etcd-csv.v0.0.1", operatorNamespace, etcdExample),
-// 			csv("jenkins-csv.v0.0.1", operatorNamespace, jenkinsExample),
-// 			ip("etcd-install-plan", operatorNamespace),
-// 			ip("jenkins-install-plan", operatorNamespace)},
-// 	}
-// }
-
-// // Return OperandRegistry obj
-// func operandRegistry(registryName, registryNamespace, operatorNamespace string) *v1alpha1.OperandRegistry {
-// 	return &v1alpha1.OperandRegistry{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      registryName,
-// 			Namespace: registryNamespace,
-// 		},
-// 		Spec: v1alpha1.OperandRegistrySpec{
-// 			Operators: []v1alpha1.Operator{
-// 				{
-// 					Name:            "etcd",
-// 					Namespace:       operatorNamespace,
-// 					SourceName:      "community-operators",
-// 					SourceNamespace: "openshift-marketplace",
-// 					PackageName:     "etcd",
-// 					Channel:         "singlenamespace-alpha",
-// 					Scope:           v1alpha1.ScopePublic,
-// 				},
-// 				{
-// 					Name:            "jenkins",
-// 					Namespace:       operatorNamespace,
-// 					SourceName:      "community-operators",
-// 					SourceNamespace: "openshift-marketplace",
-// 					PackageName:     "jenkins-operator",
-// 					Channel:         "alpha",
-// 					Scope:           v1alpha1.ScopePublic,
-// 				},
-// 			},
-// 		},
-// 	}
-// }
-
-// // Return OperandConfig obj
-// func operandConfig(configName, configNamespace string) *v1alpha1.OperandConfig {
-// 	return &v1alpha1.OperandConfig{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      configName,
-// 			Namespace: configNamespace,
-// 		},
-// 		Spec: v1alpha1.OperandConfigSpec{
-// 			Services: []v1alpha1.ConfigService{
-// 				{
-// 					Name: "etcd",
-// 					Spec: map[string]runtime.RawExtension{
-// 						"etcdCluster": {Raw: []byte(`{"size": 3}`)},
-// 					},
-// 				},
-// 				{
-// 					Name: "jenkins",
-// 					Spec: map[string]runtime.RawExtension{
-// 						"jenkins": {Raw: []byte(`{"service":{"port": 8081}}`)},
-// 					},
-// 				},
-// 			},
-// 		},
-// 	}
-// }
-
-// // Return OperandRequest obj
-// func operandRequest(name, namespace, registryName, registryNamespace string) *v1alpha1.OperandRequest {
-// 	return &v1alpha1.OperandRequest{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      name,
-// 			Namespace: namespace,
-// 		},
-// 		Spec: v1alpha1.OperandRequestSpec{
-// 			Requests: []v1alpha1.Request{
-// 				{
-// 					Registry:          registryName,
-// 					RegistryNamespace: registryNamespace,
-// 					Operands: []v1alpha1.Operand{
-// 						{
-// 							Name: "etcd",
-// 						},
-// 						{
-// 							Name: "jenkins",
-// 						},
-// 					},
-// 				},
-// 			},
-// 		},
-// 	}
-// }
-
-// // Return Subscription obj
-// func sub(name, namespace, csvVersion string) *olmv1alpha1.Subscription {
-// 	labels := map[string]string{
-// 		constant.OpreqLabel: "true",
-// 	}
-// 	return &olmv1alpha1.Subscription{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      name,
-// 			Namespace: namespace,
-// 			Labels:    labels,
-// 		},
-// 		Spec: &olmv1alpha1.SubscriptionSpec{
-// 			Channel:                "alpha",
-// 			Package:                name,
-// 			CatalogSource:          "community-operators",
-// 			CatalogSourceNamespace: "openshift-marketplace",
-// 		},
-// 		Status: olmv1alpha1.SubscriptionStatus{
-// 			CurrentCSV:   name + "-csv.v" + csvVersion,
-// 			InstalledCSV: name + "-csv.v" + csvVersion,
-// 			Install: &olmv1alpha1.InstallPlanReference{
-// 				APIVersion: "operators.coreos.com/v1alpha1",
-// 				Kind:       "InstallPlan",
-// 				Name:       name + "-install-plan",
-// 				UID:        types.UID("install-plan-uid"),
-// 			},
-// 			InstallPlanRef: &corev1.ObjectReference{
-// 				APIVersion: "operators.coreos.com/v1alpha1",
-// 				Kind:       "InstallPlan",
-// 				Name:       name + "-install-plan",
-// 				Namespace:  namespace,
-// 				UID:        types.UID("install-plan-uid"),
-// 			},
-// 		},
-// 	}
-// }
-
-// // Return CSV obj
-// func csv(name, namespace, example string) *olmv1alpha1.ClusterServiceVersion {
-// 	return &olmv1alpha1.ClusterServiceVersion{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      name,
-// 			Namespace: namespace,
-// 			Annotations: map[string]string{
-// 				"alm-examples": example,
-// 			},
-// 		},
-// 		Spec: olmv1alpha1.ClusterServiceVersionSpec{},
-// 		Status: olmv1alpha1.ClusterServiceVersionStatus{
-// 			Phase: olmv1alpha1.CSVPhaseSucceeded,
-// 		},
-// 	}
-// }
-
-// // Return InstallPlan obj
-// func ip(name, namespace string) *olmv1alpha1.InstallPlan {
-// 	return &olmv1alpha1.InstallPlan{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      name,
-// 			Namespace: namespace,
-// 		},
-// 		Spec: olmv1alpha1.InstallPlanSpec{},
-// 		Status: olmv1alpha1.InstallPlanStatus{
-// 			Phase: olmv1alpha1.InstallPlanPhaseComplete,
-// 		},
-// 	}
-// }
-
-// const etcdExample string = `
-// [
-// 	{
-// 	  "apiVersion": "etcd.database.coreos.com/v1beta2",
-// 	  "kind": "EtcdCluster",
-// 	  "metadata": {
-// 		"name": "example"
-// 	  },
-// 	  "spec": {
-// 		"size": 3,
-// 		"version": "3.2.13"
-// 	  }
-// 	}
-// ]
-// `
-// const jenkinsExample string = `
-// [
-// 	{
-// 	  "apiVersion": "jenkins.io/v1alpha2",
-// 	  "kind": "Jenkins",
-// 	  "metadata": {
-// 		"name": "example"
-// 	  },
-// 	  "spec": {
-// 		"service": {"port": 8081}
-// 	  }
-// 	}
-// ]
-// `
+const etcdExample string = `
+[
+	{
+	  "apiVersion": "etcd.database.coreos.com/v1beta2",
+	  "kind": "EtcdCluster",
+	  "metadata": {
+		"name": "example"
+	  },
+	  "spec": {
+		"size": 3,
+		"version": "3.2.13"
+	  }
+	}
+]
+`
+const jenkinsExample string = `
+[
+	{
+	  "apiVersion": "jenkins.io/v1alpha2",
+	  "kind": "Jenkins",
+	  "metadata": {
+		"name": "example"
+	  },
+	  "spec": {
+		"service": {"port": 8081}
+	  }
+	}
+]
+`
