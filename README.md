@@ -2,6 +2,8 @@
 [![License](http://img.shields.io/:license-apache-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
 [![Go Report Card](https://goreportcard.com/badge/github.com/IBM/operand-deployment-lifecycle-manager)](https://goreportcard.com/report/github.com/IBM/operand-deployment-lifecycle-manager)
 [![Code Coverage](https://codecov.io/gh/IBM/operand-deployment-lifecycle-manager/branch/master/graphs/badge.svg?branch=master)](https://codecov.io/gh/IBM/operand-deployment-lifecycle-manager?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/IBM/operand-deployment-lifecycle-manager)](https://goreportcard.com/report/github.com/IBM/operand-deployment-lifecycle-manager)
+[![Go Reference](https://pkg.go.dev/badge/github.com/IBM/operand-deployment-lifecycle-manager.svg)](https://pkg.go.dev/github.com/IBM/operand-deployment-lifecycle-manager)
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
