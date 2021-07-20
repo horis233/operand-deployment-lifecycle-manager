@@ -19,7 +19,6 @@ package operandrequest
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -27,9 +26,8 @@ import (
 
 	olmv1 "github.com/operator-framework/api/pkg/operators/v1"
 	olmv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	"github.com/pkg/errors"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog"
@@ -75,7 +73,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 
 	// Always attempt to patch the status after each reconciliation.
 	defer func() {
-		if reflect.DeepEqual(originalInstance.Status, requestInstance.Status) {
+		if equality.Semantic.DeepEqual(originalInstance.Status, requestInstance.Status) {
 			return
 		}
 		if err := r.Client.Status().Patch(ctx, requestInstance, client.MergeFrom(originalInstance)); err != nil {
@@ -135,6 +133,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	}
 
 	// Reconcile Operators
+	installableOperatorList := r.newInstallableOperator(ctx, requestInstance)
+
+	for _, installableOperator := range installableOperatorList {
+		installableOperator.Install(ctx, r, requestInstance)
+	}
+	// Reconcile Operators
 	if err := r.reconcileOperator(ctx, requestInstance); err != nil {
 		klog.Errorf("failed to reconcile Operators for OperandRequest %s: %v", req.NamespacedName.String(), err)
 		return ctrl.Result{}, err
@@ -154,76 +158,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 
 	klog.V(1).Infof("Finished reconciling OperandRequest: %s", req.NamespacedName)
 	return ctrl.Result{RequeueAfter: constant.DefaultSyncPeriod}, nil
-}
-
-func (r *Reconciler) checkPermission(ctx context.Context, req ctrl.Request) bool {
-	// Check update permission
-	if !r.checkUpdateAuth(ctx, req.Namespace, "operator.ibm.com", "operandrequests") {
-		return false
-	}
-	if !r.checkUpdateAuth(ctx, req.Namespace, "operator.ibm.com", "operandrequests/status") {
-		return false
-	}
-	return true
-}
-
-// Check if operator has permission to update OperandRequest
-func (r *Reconciler) checkUpdateAuth(ctx context.Context, namespace, group, resource string) bool {
-	sar := &authorizationv1.SelfSubjectAccessReview{
-		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: namespace,
-				Verb:      "update",
-				Group:     group,
-				Resource:  resource,
-			},
-		},
-	}
-
-	if err := r.Create(ctx, sar); err != nil {
-		klog.Errorf("Failed to check operator update permission: %v", err)
-		return false
-	}
-
-	klog.V(3).Infof("Operator update permission in namespace %s, Allowed: %t, Denied: %t, Reason: %s", namespace, sar.Status.Allowed, sar.Status.Denied, sar.Status.Reason)
-	return sar.Status.Allowed
-}
-
-func (r *Reconciler) addFinalizer(ctx context.Context, cr *operatorv1alpha1.OperandRequest) (bool, error) {
-	if cr.GetDeletionTimestamp() == nil {
-		originalReq := cr.DeepCopy()
-		added := cr.EnsureFinalizer()
-		if added {
-			// Add finalizer to OperandRequest instance
-			err := r.Patch(ctx, cr, client.MergeFrom(originalReq))
-			if err != nil {
-				return false, errors.Wrapf(err, "failed to update the OperandRequest %s/%s", cr.Namespace, cr.Name)
-			}
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func (r *Reconciler) checkFinalizer(ctx context.Context, requestInstance *operatorv1alpha1.OperandRequest) error {
-	klog.V(1).Infof("Deleting OperandRequest %s in the namespace %s", requestInstance.Name, requestInstance.Namespace)
-	existingSub := &olmv1alpha1.SubscriptionList{}
-
-	opts := []client.ListOption{
-		client.MatchingLabels(map[string]string{constant.OpreqLabel: "true"}),
-	}
-
-	if err := r.Client.List(ctx, existingSub, opts...); err != nil {
-		return err
-	}
-	if len(existingSub.Items) == 0 {
-		return nil
-	}
-	// Delete all the subscriptions that created by current request
-	if err := r.absentOperatorsAndOperands(ctx, requestInstance); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (r *Reconciler) getRegistryToRequestMapper() handler.MapFunc {
@@ -298,7 +232,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				oldObject := e.ObjectOld.(*operatorv1alpha1.OperandRegistry)
 				newObject := e.ObjectNew.(*operatorv1alpha1.OperandRegistry)
-				return !reflect.DeepEqual(oldObject.Spec, newObject.Spec)
+				return !equality.Semantic.DeepEqual(oldObject.Spec, newObject.Spec)
 			},
 			DeleteFunc: func(e event.DeleteEvent) bool {
 				// Evaluates to false if the object has been confirmed deleted.
@@ -313,7 +247,8 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				oldObject := e.ObjectOld.(*operatorv1alpha1.OperandConfig)
 				newObject := e.ObjectNew.(*operatorv1alpha1.OperandConfig)
-				return !reflect.DeepEqual(oldObject.Spec, newObject.Spec)
+				return !equality.Semantic.DeepEqual(oldObject.Spec, newObject.Spec)
 			},
 		})).Complete(r)
 }
+

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	olmv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	operatorsv1 "github.com/operator-framework/operator-lifecycle-manager/pkg/package-server/apis/operators/v1"
@@ -27,6 +28,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
@@ -34,7 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	apiv1alpha1 "github.com/IBM/operand-deployment-lifecycle-manager/api/v1alpha1"
-	constant "github.com/IBM/operand-deployment-lifecycle-manager/controllers/constant"
+	"github.com/IBM/operand-deployment-lifecycle-manager/controllers/constant"
+	"github.com/IBM/operand-deployment-lifecycle-manager/controllers/helpers"
 )
 
 // ODLMOperator is the struct for ODLM controllers
@@ -74,16 +77,15 @@ func (m *ODLMOperator) GetOperandRegistry(ctx context.Context, key types.Namespa
 			reg.Spec.Operators[i].InstallPlanApproval = olmv1alpha1.ApprovalAutomatic
 		}
 		if o.SourceName == "" || o.SourceNamespace == "" {
-			catalogSourceName, catalogSourceNs, err := m.GetCatalogSourceFromPackage(ctx, o.PackageName, o.Namespace, o.Channel, key.Namespace)
+			pm, err := m.GetPackageManifest(ctx, o.PackageName, o.Namespace, o.Channel, key.Namespace)
 			if err != nil {
 				return reg, err
 			}
-
-			if catalogSourceName == "" || catalogSourceNs == "" {
-				klog.Warningf("no catalogsource found for %v", o.PackageName)
+			if pm == nil {
+				klog.V(3).Infof("no catalogsource found for %v", o.PackageName)
 			}
 
-			reg.Spec.Operators[i].SourceName, reg.Spec.Operators[i].SourceNamespace = catalogSourceName, catalogSourceNs
+			reg.Spec.Operators[i].SourceName, reg.Spec.Operators[i].SourceNamespace = pm.Status.CatalogSource, pm.Status.CatalogSourceNamespace
 		}
 	}
 	return reg, nil
@@ -124,38 +126,98 @@ func (s sortableCatalogSource) Less(i, j int) bool {
 	return s[i].Namespace < s[j].Namespace
 }
 
-func (m *ODLMOperator) GetCatalogSourceFromPackage(ctx context.Context, packageName, namespace, channel, registryNs string) (catalogSourceName string, catalogSourceNs string, err error) {
+func (m *ODLMOperator) GetInstallPlan(ctx context.Context, sub *olmv1alpha1.Subscription) (*olmv1alpha1.InstallPlan, error) {
+	subKey := helpers.ObjectKeyForObject(sub)
+	if err := wait.PollImmediateUntil(time.Millisecond*250, func() (bool, error) {
+		if err := m.Client.Get(ctx, subKey, sub); err != nil {
+			return false, err
+		}
+		if sub.Status.InstallPlanRef != nil {
+			return true, nil
+		}
+		return false, nil
+	}, ctx.Done()); err != nil {
+		return nil, fmt.Errorf("waiting for install plan to exist: %v", err)
+	}
+
+	ip := olmv1alpha1.InstallPlan{}
+	ipKey := types.NamespacedName{
+		Namespace: sub.Status.InstallPlanRef.Namespace,
+		Name:      sub.Status.InstallPlanRef.Name,
+	}
+	if err := m.Client.Get(ctx, ipKey, &ip); err != nil {
+		return nil, fmt.Errorf("get install plan: %v", err)
+	}
+	return &ip, nil
+}
+
+func (m *ODLMOperator) GetCSV(ctx context.Context, ip *olmv1alpha1.InstallPlan) (*olmv1alpha1.ClusterServiceVersion, error) {
+	ipKey := helpers.ObjectKeyForObject(ip)
+	if err := wait.PollImmediateUntil(time.Millisecond*250, func() (bool, error) {
+		if err := m.Client.Get(ctx, ipKey, ip); err != nil {
+			return false, err
+		}
+		if ip.Status.Phase == olmv1alpha1.InstallPlanPhaseComplete {
+			return true, nil
+		}
+		return false, nil
+	}, ctx.Done()); err != nil {
+		return nil, fmt.Errorf("waiting for operator installation to complete: %v", err)
+	}
+
+	csvKey := types.NamespacedName{
+		Namespace: ipKey.Namespace,
+	}
+
+	for _, s := range ip.Status.Plan {
+		if s.Resource.Kind == "ClusterServiceVersion" {
+			csvKey.Name = s.Resource.Name
+		}
+	}
+	if csvKey.Name == "" {
+		return nil, fmt.Errorf("could not find installed CSV in install plan")
+	}
+	csv := &olmv1alpha1.ClusterServiceVersion{}
+	if err := m.Client.Get(ctx, csvKey, csv); err != nil {
+		return nil, fmt.Errorf("get clusterserviceversion: %v", err)
+	}
+	return csv, nil
+}
+
+func (m *ODLMOperator) GetPackageManifest(ctx context.Context, packageName, namespace, channel, registryNs string) (packageManifest *operatorsv1.PackageManifest, err error) {
 	packageManifestList := &operatorsv1.PackageManifestList{}
 	opts := []client.ListOption{
 		client.MatchingFields{"metadata.name": packageName},
 		client.InNamespace(namespace),
 	}
-	if err := m.Reader.List(ctx, packageManifestList, opts...); err != nil {
-		return "", "", err
+	if err = m.Reader.List(ctx, packageManifestList, opts...); err != nil {
+		return
 	}
 	number := len(packageManifestList.Items)
 
 	switch number {
 	case 0:
 		klog.Warningf("Not found PackageManifest %s in the namespace %s has channel %s", packageName, namespace, channel)
-		return "", "", nil
+		return nil, nil
 	case 1:
-		return packageManifestList.Items[0].Status.CatalogSource, packageManifestList.Items[0].Status.CatalogSourceNamespace, nil
+		return &packageManifestList.Items[0], nil
 	default:
 		var catalogSourceCandidate []CatalogSource
+		pmMapping := make(map[string]*operatorsv1.PackageManifest)
 		for _, pm := range packageManifestList.Items {
 			if !channelCheck(channel, pm.Status.Channels) {
 				continue
 			}
 			catalogSourceCandidate = append(catalogSourceCandidate, CatalogSource{Name: pm.Status.CatalogSource, Namespace: pm.Status.CatalogSourceNamespace, OpNamespace: namespace, RegistryNamespace: registryNs})
+			pmMapping[pm.Status.CatalogSourceNamespace+"/"+pm.Status.CatalogSource] = &pm
 		}
 		if len(catalogSourceCandidate) == 0 {
 			klog.Errorf("Not found PackageManifest %s in the namespace %s has channel %s", packageName, namespace, channel)
-			return "", "", nil
+			return nil, nil
 		}
 		// Sort CatalogSources by priority
 		sort.Sort(sortableCatalogSource(catalogSourceCandidate))
-		return catalogSourceCandidate[0].Name, catalogSourceCandidate[0].Namespace, nil
+		return pmMapping[catalogSourceCandidate[0].Namespace+"/"+catalogSourceCandidate[0].Name], nil
 	}
 }
 

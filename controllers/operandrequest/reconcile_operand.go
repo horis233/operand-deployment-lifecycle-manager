@@ -224,7 +224,7 @@ func (r *Reconciler) reconcileCRwithConfig(ctx context.Context, service *operato
 				continue
 			}
 		} else {
-			if checkLabel(crFromALM, map[string]string{constant.OpreqLabel: "true"}) {
+			if checkLabel(&crFromALM, map[string]string{constant.OpreqLabel: "true"}) {
 				// Update or Delete Custom Resource
 				if err := r.existingCustomResource(ctx, crFromALM, spec.(map[string]interface{}), service, namespace); err != nil {
 					merr.Add(err)
@@ -290,7 +290,7 @@ func (r *Reconciler) reconcileCRwithRequest(ctx context.Context, requestInstance
 		}
 		requestInstance.SetMemberCRStatus(operand.Name, name, operand.Kind, operand.APIVersion, &r.Mutex)
 	} else {
-		if checkLabel(crFromRequest, map[string]string{constant.OpreqLabel: "true"}) {
+		if checkLabel(&crFromRequest, map[string]string{constant.OpreqLabel: "true"}) {
 			// Update or Delete Custom resource
 			klog.V(3).Info("Found existing custom resource: " + operand.Kind)
 			if err := r.updateCustomResource(ctx, crFromRequest, requestKey.Namespace, operand.Kind, operand.Spec.Raw, map[string]interface{}{}); err != nil {
@@ -402,7 +402,7 @@ func (r *Reconciler) deleteAllCustomResource(ctx context.Context, csv *olmv1alph
 					klog.V(2).Info("Finish Deleting the CR: " + kind)
 					continue
 				}
-				if checkLabel(crTemplate, map[string]string{constant.OpreqLabel: "true"}) {
+				if checkLabel(&crTemplate, map[string]string{constant.OpreqLabel: "true"}) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
@@ -515,7 +515,7 @@ func (r *Reconciler) updateCustomResource(ctx context.Context, existingCR unstru
 			return false, errors.Wrapf(err, "failed to get custom resource -- Kind: %s, NamespacedName: %s/%s", kind, namespace, name)
 		}
 
-		if !checkLabel(existingCR, map[string]string{constant.OpreqLabel: "true"}) {
+		if !checkLabel(&existingCR, map[string]string{constant.OpreqLabel: "true"}) {
 			return true, nil
 		}
 
@@ -611,7 +611,7 @@ func (r *Reconciler) deleteCustomResource(ctx context.Context, existingCR unstru
 	if apierrors.IsNotFound(err) {
 		klog.V(3).Infof("There is no custom resource: %s from custom resource definition: %s", name, kind)
 	} else {
-		if checkLabel(crShouldBeDeleted, map[string]string{constant.OpreqLabel: "true"}) && !checkLabel(crShouldBeDeleted, map[string]string{constant.NotUninstallLabel: "true"}) {
+		if checkLabel(&crShouldBeDeleted, map[string]string{constant.OpreqLabel: "true"}) && !checkLabel(&crShouldBeDeleted, map[string]string{constant.NotUninstallLabel: "true"}) {
 			klog.V(3).Infof("Deleting custom resource: %s from custom resource definition: %s", name, kind)
 			err := r.Delete(ctx, &crShouldBeDeleted)
 			if err != nil && !apierrors.IsNotFound(err) {
@@ -711,7 +711,7 @@ func (r *Reconciler) checkCustomResource(ctx context.Context, requestInstance *o
 	return nil
 }
 
-func checkLabel(unstruct unstructured.Unstructured, labels map[string]string) bool {
+func checkLabel(unstruct *unstructured.Unstructured, labels map[string]string) bool {
 	for k, v := range labels {
 		if !hasLabel(unstruct, k) {
 			return false
@@ -723,7 +723,7 @@ func checkLabel(unstruct unstructured.Unstructured, labels map[string]string) bo
 	return true
 }
 
-func hasLabel(cr unstructured.Unstructured, labelName string) bool {
+func hasLabel(cr *unstructured.Unstructured, labelName string) bool {
 	if cr.GetLabels() == nil {
 		return false
 	}
